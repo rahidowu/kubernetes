@@ -1,0 +1,180 @@
+Kubeadm:
+========
+kubeadm helps with installing and configuring kubernates cluster.
+kubeadm init [flags] ==> on master 
+kubeadm join ==> on worker node
+kubeadm join --token [] --discovery-token-cacert-hash []
+kubeadm token [create|delete|list|generate] [flags] ==> this is helps us to create token.
+kubeadm version 
+kubeadm upgrade plan [version] [flags] ==> we can upgrade and downgrade the cluster if it is necessary.
+
+labels: 
+======
+kubectl get pod --show-labels ==> to list out labels assign to all pods
+kubectl label pod nginx-pod env- ==> too delete the label from pod
+kubectl label pod nginx-pod env=qa --overwrite ==> overwrite the pod label
+
+kubectl get pod -l "env=dev" ==> it will listout the pods in env=dev labels
+kubectl get pod -l "env=dev" , "env=test" ==> it will show both dev and test env
+
+labeling a node
+kubectl label node <nodename> disk=ssd
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tomcat
+spec: 
+  containers: 
+  - name: tomcat-container
+    image: tomcat:latest
+    ports: 
+    containerPort: 8080
+  nodeSelector:
+    disk: ssd
+
+
+set based selector:
+==================
+
+selector:
+  matchLabels: 
+    component: redis
+  matchExpressions:
+    - {key: env , operator: In , values: [dev,test]}
+    - {key: env , operator: NotIn , values: [prod]}
+  
+
+annotations: 
+============
+annotation is non identified metadata in k8s . some of the reosources using annotations like prometheus need mertics from pods need to monitoring via some endpoint. that endpoints we will configuring on metadata section as a annontations.
+
+these are the external tools which is interated with k8s.
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tomcat
+  annotations: 
+    gitbranch: master
+    prometheus.io/path: /metrics
+    prometheus.io/port: "9012"
+  labels: 
+    stage: dev
+spec: 
+  containers: 
+  - name: tomcat-container
+    image: tomcat:latest
+    ports: 
+    containerPort: 8080
+
+pre-reqs:
+=========
+3GB or more RAM
+3cpu or more
+full network connectivity among all the machines in the servers.
+disable SELINUX and SWAP of all nodes.
+
+User Managment:
+==============
+
+create a usercreds:
+=================
+
+kubectl create namespace devteam
+mkdir devcreds ==> to use this directory to store user creds
+openssl genrsa -out developer.key 2048
+openssl req -new -key developer.key -out developer.csr -subj "/CN=developer/O=javadeveloper"
+cn=commonname;O=organization
+cat developer.csr
+* sign this certificate with cluster ca
+ls -tlh /etc/kubernetes/pki ==> this is the certificate location of kubernetes(kubeadm)
+openssl x509 -req -in developer.csr -CA /etc/kuberntes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -CAcreateserial -out developer.crt -days 500
+developer.csr , developer.crt , developer.key ==> by using these keys user can access k8s env.
+
+create a role for ns:
+====================
+rbac.yaml
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+    namespace: javaproject
+    name: deployment-manager-role
+rules:
+- apiGroups: ["extensions","apps"]
+  resources: ["deployments","repicasets","pods"]
+  verbs: ["get","list","watch","create","update","patch","delete"]
+
+kubectl create -f rbac.yaml
+
+role-binding:
+============
+rolebind.yaml
+
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+    namespace: javaproject
+    name: deployment-manager-rolebinding
+subjects:
+- kind: User
+  name: developer
+  apiGroup: ""
+roleRef:
+    kind: role
+    name: deployment-manager-role
+    apiGroup: ""
+
+kubectl apply -f rolebinding.yaml 
+
+Note: set up developer user account can communicate to kubenetes cluster machine
+
+kubectl config set-credentials developer --client-certificate=root/developer/developer.crt --client-key=/root/developer/developer.key 
+
+kubectl config set-context developer-context --cluster=kubernetes --namespace=javaproject --user=developer
+
+after that we need to verify config file
+
+cat ~/.kube/config
+
+kubectl --kubeconfig ./admin.config config view -o jsonpath='{.contexts[*].name}'
+kubectl --kubeconfig ./admin.config get pods --namespace=javaproject
+
+liveness:
+========
+liveness probe is resposible for telling to k8s cluster conatiner need to be restarted because of there is a deadlock is happen in k8s cluster in that case container should not work.
+
+livenessprobe is mentioned in conatiner section in manifest file.
+
+livenessProbe:
+  httpGet:
+    path: /hello
+    #health status endpoint of the application
+    port: 8080
+    #port on which it is running
+  initialDelaySeconds: 15
+  #after container is starting it will wait for 15sec after then checking    any deadlock is happening or not.
+  periodSeconds: 10
+  #regular interval after the application startup.
+
+note:
+====
+  intials delayseconds and period seconds work same but initialdelayseconds is useful when you deployed your application first time.its gona wait for the 15 sec.
+  after that they can regularly using peroidseconds.
+
+  az aks:
+  ======
+  login in k8s 
+  #az aks Get-Credentials --resource-group kube-rg --name cluster-1
+  merged "Cluster-1" as a current context in /home/satya/.kube/config
+
+  manage identity:
+  ============
+  #az aks create -g myRSG -n myManagedCluster --enable-managed-identity
+  
+  update existing managed identity:
+  ==============================
+
+  #az aks update -g <RGname> -n <AKSName> --enable-managed-identity --assign-dentity <UserAssignedIdentityResourceID> az aks create -g MyResourceGroup -n MyManagedCluster --enable-managed-identity
+
